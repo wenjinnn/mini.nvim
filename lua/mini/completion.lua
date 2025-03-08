@@ -428,7 +428,7 @@ MiniCompletion.completefunc_lsp = function(findstart, base)
     local words = H.process_lsp_response(H.completion.lsp.result, function(response, client_id)
       is_incomplete = is_incomplete or response.isIncomplete
       -- Response can be `CompletionList` with 'items' field or `CompletionItem[]`
-      local items = H.table_get(response, { 'items' }) or response
+      local items = H.get_items(response) or response
       if type(items) ~= 'table' then return {} end
       items = process_items(items, base)
       return H.lsp_completion_response_items_to_complete_items(items, client_id)
@@ -1003,7 +1003,7 @@ H.lsp_completion_response_items_to_complete_items = function(items, client_id)
     local lsp_data = { completion_item = item, client_id = client_id, needs_snippet_insert = needs_snippet_insert }
     table.insert(res, {
       -- Show less for snippet items (usually less confusion)
-      word = needs_snippet_insert and item.label or word,
+      word = needs_snippet_insert and (item.insertText or item.label) or word,
       abbr = item.label,
       kind = item_kinds[item.kind] or 'Unknown',
       kind_hlgroup = item.kind_hlgroup,
@@ -1039,7 +1039,7 @@ H.make_add_kind_hlgroup = function()
 end
 
 H.get_completion_word = function(item)
-  return H.table_get(item, { 'textEdit', 'newText' }) or item.insertText or item.label or ''
+  return H.table_get(item, { 'textEdit', 'newText' }) or item.textEditText or item.insertText or item.label or ''
 end
 
 H.make_lsp_extra_actions = function(lsp_data)
@@ -1596,6 +1596,46 @@ H.table_get = function(t, id)
     --stylua: ignore end
   end
   return res
+end
+
+--- Properly handle CompletionItems, referenced the neovim source code.
+H.get_items = function(result)
+  if result.items then
+    -- When we have a list, apply the defaults and return an array of items.
+    for _, item in ipairs(result.items) do
+      ---@diagnostic disable-next-line: param-type-mismatch
+      H.apply_item_defaults(item, result.itemDefaults)
+    end
+    return result.items
+  else
+    -- Else just return the items as they are.
+    return result
+  end
+end
+
+--- Applies the given defaults to the completion item, modifying it in place.
+---
+--- @param item lsp.CompletionItem
+--- @param defaults lsp.ItemDefaults?
+H.apply_item_defaults = function(item, defaults)
+  if not defaults then
+    return
+  end
+
+  item.insertTextFormat = item.insertTextFormat or defaults.insertTextFormat
+  item.insertTextMode = item.insertTextMode or defaults.insertTextMode
+  item.data = item.data or defaults.data
+  if defaults.editRange then
+    local textEdit = item.textEdit or {}
+    item.textEdit = textEdit
+    textEdit.newText = textEdit.newText or item.textEditText or item.insertText or item.label
+    if defaults.editRange.start then
+      textEdit.range = textEdit.range or defaults.editRange
+    elseif defaults.editRange.insert then
+      textEdit.insert = defaults.editRange.insert
+      textEdit.replace = defaults.editRange.replace
+    end
+  end
 end
 
 H.get_left_char = function()
